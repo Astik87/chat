@@ -123,6 +123,11 @@ class Model
         
     }
 
+
+    /**
+     * Saves object parameters to the database. If the id field is not empty it updates the data
+     * @return bool Returns "true" if everything went smoothly. Otherwise "false"
+     */
     public function save()
     {
 

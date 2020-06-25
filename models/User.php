@@ -17,6 +17,8 @@ class User extends Model
     public $updated_at;
     public $status;
 
+    protected static $isGuest;
+ 
     public function rules()
     {
         return [
@@ -33,19 +35,19 @@ class User extends Model
         return 'users';
     }
 
-    public function signup($params)
+    public function signup($data)
     {
-        $this->name = $params['name'];
-        $this->surname = $params['surname'];
-        $this->phone = str_replace(['+', '-', '(', ')', ' '], '', $params['phone']);
-        $this->password = $params['password'];
+        $this->name = $data['name'];
+        $this->surname = $data['surname'];
+        $this->phone = str_replace(['+', '-', '(', ')', ' '], '', $data['phone']);
+        $this->password = $data['password'];
         $this->created_at = time();
 
-        if (!$this->validate() || !isset($params['do_signup'])) {
+        if (!$this->validate() || !isset($data['do_signup'])) {
             return false;
         }
 
-        if ($this->password != $params['password_2']) {
+        if ($this->password != $data['password_2']) {
             $this->addError('Повторный пароль введен не верно');
             return false;
         }
@@ -54,6 +56,54 @@ class User extends Model
 
         return $this->save();
 
+    }
+
+    public function login($data = null) 
+    {
+
+        $session = $_SESSION['user'];
+        if (!empty($session)) {
+            $user = $this->findOne('id = :id', [':id' => $session['id']]);
+            if ($user->password == $session['password']) {
+                return true;
+            }
+        }
+
+        if ($data !== null) {
+
+            $this->phone = str_replace(['-','+','(',')',' '], '', $data['phone']);
+
+            $user = $this->findOne('phone = :phone', [':phone' => $this->phone]);
+            if ($user && password_verify($data['password'], $user->password)) {
+                $_SESSION['user'] = [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'surname' => $user->surname,
+                    'password' => $user->password
+                ];
+                return true;
+            }
+            
+        }
+
+        $this->addError('Не правельный номер или пароль');
+
+        return false;
+    }
+
+    public function signOut()
+    {
+
+        session_start();
+
+        if (!empty($_SESSION['user'])) {
+            unset($_SESSION['user']);
+        }
+    }
+
+    public function isGuest()
+    {
+        return $this->login();
     }
 
 }
