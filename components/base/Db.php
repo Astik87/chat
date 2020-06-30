@@ -23,7 +23,10 @@ class Db {
         $redBeanPhpPath = ROOT_DIR . '/components/base/RedBeanPHP.php';
         include($redBeanPhpPath);
         \R::setup("mysql:host={$params['host']};dbname={$params['dbname']}", 
-                                      $params['user'], $params['password']);
+                                      $params['user'], $params['password'], false);
+        \R::ext('xdispense', function( $type ){
+            return \R::getRedBean()->dispense( $type );
+        });
         if (\R::testConnection()) {
             self::$RedBean = new \R;
             return self::$RedBean;

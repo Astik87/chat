@@ -4,6 +4,9 @@ namespace models;
 
 use components\base\Model;
 use components\base\View;
+use components\base\Db;
+use components\Session;
+use components\SMS;
 
 class User extends Model 
 {
@@ -18,7 +21,10 @@ class User extends Model
     public $status;
 
     protected static $isGuest;
- 
+    
+    /**
+     * Правила валидации
+     */
     public function rules()
     {
         return [
@@ -30,11 +36,19 @@ class User extends Model
         ];
     }
 
+    /**
+     * Возвращает имя таблицы в базе данных
+     */
     public function getTableName()
     {
         return 'users';
     }
 
+    /**
+     * Регистрация пользователя
+     * @param array $data Данные пользователя
+     * @return boolean
+     */
     public function signup($data)
     {
         $this->name = $data['name'];
@@ -54,36 +68,127 @@ class User extends Model
 
         $this->password = password_hash($this->password, PASSWORD_DEFAULT);
 
-        return $this->save();
+        if ($this->sendConfirmationCode()) {
+            $session = new Session();
+            $session->set('phone', $this->phone);
+            return $this->save();
+        }
+
+        return false;
 
     }
 
-    public function login($data = null) 
+
+    /**
+     * Отправляет СМС с кодом подтверждения 
+     */
+    public function sendConfirmationCode()
     {
 
-        $session = $_SESSION['user'];
+        $code = rand(10000,99999);
+        
+        $R = Db::getConnection();
+        while($R::findOne('confirmation_codes', 'code = :code', [':code' => $code])) {
+            $code = rand(10000,99999);
+        }
+
+        $sms = new SMS();
+
+        $sms->to = $this->phone;
+        $sms->text = 'Код для подтверждения: '.$code;
+        $sms->send();
+
+        if ($sms->getStatus() == 'OK') {
+            $record = $R::xdispense('confirmation_codes');
+            $record->phone = $this->phone;
+            $record->code = $code;
+            $R::store($record);
+        } else {
+            $this->addError("Не удалось отправить SMS код на номер {$this->phone}");
+            return false;
+        }
+
+        return true;
+        
+    }
+
+    /**
+     * Подтверждение СМС кода
+     * @param integer $code СМС код
+     */
+    public function verifyCode($code)
+    {
+
+        $session = new Session();
+
+        $phone = $session->get('phone');
+
+        $R = Db::getConnection();
+
+        $record = $R::findOne('confirmation_codes', 'phone = ?', [$phone]);
+
+        if ($record->code == $code) {
+
+            $R::trash($record);
+
+            $user = $this::findOne('phone = :phone', [':phone' => $phone]);
+            $user->status = 1;
+            $user->save();
+
+            $session->set('user', [
+                'id' => $user->id,
+                'name' => $user->name,
+                'surname' => $user->surname,
+                'phone' => $user->phone,
+                'password' => $user->password
+            ]);           
+
+            $session->unset('phone');
+
+            return true;
+
+        }
+
+        $this->addError('Код введен неверно');
+
+        return false;
+
+    }
+
+    /**
+     * Авторизация пользователя
+     * @return boolean
+     */
+    public function login() 
+    {
+
+        $sessions = new Session();
+
+        $session = $sessions->get('user');
         if (!empty($session)) {
+
             $user = $this->findOne('id = :id', [':id' => $session['id']]);
+            
             if ($user->password == $session['password']) {
                 return true;
             }
+
         }
 
-        if ($data !== null) {
+        $this->phone = str_replace(['-','+','(',')',' '], '', $this->phone);
 
-            $this->phone = str_replace(['-','+','(',')',' '], '', $data['phone']);
-
-            $user = $this->findOne('phone = :phone', [':phone' => $this->phone]);
-            if ($user && password_verify($data['password'], $user->password)) {
-                $_SESSION['user'] = [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'surname' => $user->surname,
-                    'password' => $user->password
-                ];
-                return true;
-            }
-            
+        $user = $this->findOne('phone = :phone', [':phone' => $this->phone]);
+        
+        if ($user && password_verify($this->password, $user->password)) {
+            $userData = [
+                'id' => $user->id,
+                'name' => $user->name,
+                'surname' => $user->surname,
+                'phone' => $user->phone,
+                'password' => $user->password
+            ];
+            $sessions->set('user', $userData);
+            return true;
         }
 
         $this->addError('Не правельный номер или пароль');
@@ -93,17 +198,20 @@ class User extends Model
 
     public function signOut()
     {
-
-        session_start();
-
-        if (!empty($_SESSION['user'])) {
-            unset($_SESSION['user']);
+        $sessions = new Session();
+        if (!empty($sessions->get('user'))) {
+            $sessions->unset('user');
         }
     }
 
+    /**
+     * Возвращает true если пользователь не авторизован. Иначе false
+     * @return boolean
+     */
     public function isGuest()
     {
-        return $this->login();
+        $session = new Session();
+        return !empty($session->get('user'));
     }
 
 }
